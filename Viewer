@@ -1,0 +1,187 @@
+package gui;
+
+import models.GeoInterpretacao;
+import utils.ColorConverter;
+import services.ConsultaCores;
+import utils.NormalizadorImagem;
+import utils.RelatorioCSV;
+import models.CorMunsell;
+
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.List;
+
+public class ViewerComMira extends JFrame {
+
+    private String caminhoOriginal;
+    private BufferedImage imagem;
+    private PainelImagemComMira painelImagem;
+
+    private boolean mostrandoOriginal = true;
+
+    public ViewerComMira(String caminhoImagemOriginal) {
+        this.caminhoOriginal = caminhoImagemOriginal;
+
+        setTitle("Viewer com Mira");
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        // 1) Carrega imagem ORIGINAL
+        try {
+            imagem = ImageIO.read(new File(caminhoOriginal));
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Erro ao carregar imagem original.");
+            return;
+        }
+
+        // 2) Painel com mira
+        painelImagem = new PainelImagemComMira(imagem);
+
+        // 3) Scroll automático
+        JScrollPane scroll = new JScrollPane(
+                painelImagem,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        );
+
+        add(scroll);
+
+        pack();
+        setLocationRelativeTo(null);
+
+        // 4) ENTER para normalizar
+        addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (mostrandoOriginal && e.getKeyCode() == KeyEvent.VK_ENTER) {
+                    trocarParaImagemNormalizada();
+                }
+            }
+        });
+
+        // 5) Clique —> mantém mira fixa e busca cor
+        painelImagem.setListenerClique((x, y) -> {
+
+            if (mostrandoOriginal)
+                return;
+
+            int[] mediaRGB = calcularMediaNaMira(imagem, x, y, 10);
+
+            if (mediaRGB == null) {
+                JOptionPane.showMessageDialog(null, "Erro ao capturar RGB.");
+                return;
+            }
+
+            double[] lab = ColorConverter.rgbToLab(
+                    mediaRGB[0], mediaRGB[1], mediaRGB[2]
+            );
+
+            List<GeoInterpretacao> interpretacoes = ConsultaCores.buscarTop3CoresComInterpretacao(
+                    lab[0], lab[1], lab[2]
+            );
+
+            if (interpretacoes == null || interpretacoes.isEmpty()) {
+                JOptionPane.showMessageDialog(null, "Nenhuma cor encontrada.");
+                return;
+            }
+
+
+            GeoInterpretacao melhor = interpretacoes.get(0);
+
+            RelatorioCSV.escreverCabecalho();
+            RelatorioCSV.salvarAnalise(
+                    new File(caminhoOriginal).getName(),
+                    mediaRGB[0], mediaRGB[1], mediaRGB[2],
+                    melhor.getCor()
+            );
+
+            SwingUtilities.invokeLater(() -> {
+                new JanelaTop3Cores(interpretacoes).setVisible(true);
+            });
+        });
+
+        // Mostra janela
+        setVisible(true);
+
+        // Mensagem inicial
+        JOptionPane.showMessageDialog(
+                this,
+                "Você está vendo a imagem original.\nAperte ENTER para normalizar e ativar a mira.",
+                "Preview",
+                JOptionPane.INFORMATION_MESSAGE
+        );
+    }
+
+    // ------------------------------------------------------
+    // TROCA PARA IMAGEM NORMALIZADA
+    // ------------------------------------------------------
+    private void trocarParaImagemNormalizada() {
+
+        String caminhoNorm = NormalizadorImagem.normalizarImagem(caminhoOriginal);
+
+        if (caminhoNorm == null) {
+            JOptionPane.showMessageDialog(this, "Erro ao normalizar imagem.");
+            return;
+        }
+
+        try {
+            imagem = ImageIO.read(new File(caminhoNorm));
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Erro ao carregar imagem normalizada.");
+            return;
+        }
+
+        painelImagem.setImagem(imagem);
+        painelImagem.repaint();
+
+        mostrandoOriginal = false;
+
+        JOptionPane.showMessageDialog(
+                this,
+                "Imagem normalizada carregada!\nAgora você pode clicar para usar a mira.",
+                "OK",
+                JOptionPane.INFORMATION_MESSAGE
+        );
+    }
+
+    // ------------------------------------------------------
+    // CÁLCULO DA MÉDIA RGB NA ÁREA DA MIRA
+    // ------------------------------------------------------
+    private int[] calcularMediaNaMira(BufferedImage img, int cx, int cy, int raio) {
+        int somaR = 0, somaG = 0, somaB = 0;
+        int count = 0;
+
+        for (int x = cx - raio; x <= cx + raio; x++) {
+            for (int y = cy - raio; y <= cy + raio; y++) {
+
+                if (x < 0 || y < 0 || x >= img.getWidth() || y >= img.getHeight())
+                    continue;
+
+                Color c = new Color(img.getRGB(x, y));
+                somaR += c.getRed();
+                somaG += c.getGreen();
+                somaB += c.getBlue();
+                count++;
+            }
+        }
+
+        if (count == 0)
+            return null;
+
+        return new int[]{
+                somaR / count,
+                somaG / count,
+                somaB / count
+        };
+    }
+
+    // ------------------------------------------------------
+    // MÉTODO 
+    // ------------------------------------------------------
+    public static void abrirComPreview(String caminhoImagemOriginal) {
+        new ViewerComMira(caminhoImagemOriginal);
+    }
+}
